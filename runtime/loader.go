@@ -1,137 +1,135 @@
 package runtime
-package runtime
 
 import (
 	"fmt"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-}	return p.pathfunc (p *Plugin) Path() string {// Useful for logging and error reporting.// Path returns the original file path of the loaded plugin.}	}		p.config = nil		p.config.Release()	if p.config != nil {	}		p.vm = nil		p.vm.Release()	if p.vm != nil {func (p *Plugin) Close() {//   defer plugin.Close()//   plugin, _ := runtime.LoadPlugin("plugin.wasm")// Example://// After Close() is called, Init(), Execute(), and Cleanup() must not be called.//// are no-ops.// resource leaks. It's safe to call Close() multiple times - subsequent calls// This method must be called when the plugin is no longer needed to prevent//// Close releases all VM resources owned by this plugin.}	}, nil		config: config,		vm:     vm,		path:   path,	return &Plugin{	// Success - return initialized plugin	}		return nil, fmt.Errorf("WASM module instantiation failed for %s: %w", path, err)		config.Release()		vm.Release()	if err := vm.Instantiate(); err != nil {	// After this point, exports are callable	// Allocates linear memory, initializes globals, runs start functions (if any)	// Step 6: Instantiate the module	}		return nil, fmt.Errorf("WASM module validation failed for %s: %w", path, err)		config.Release()		vm.Release()	if err := vm.Validate(); err != nil {	// Verifies bytecode structure, type checking, and instruction validity	// Step 5: Validate the module	}		return nil, fmt.Errorf("failed to load WASM file %s: %w", path, err)		config.Release()		vm.Release()	if err := vm.LoadWasmFile(path); err != nil {	// Reads and parses the WebAssembly binary	// Step 4: Load WASM file from disk	)		[]string{},      // No pre-opened directories (sandbox)		os.Environ(),    // Inherit host environment variables		[]string{},      // No command-line arguments	wasi.InitWasi(	// No command-line args, inherit host environment, no pre-opened directories	// Initialize WASI with minimal environment		}		return nil, fmt.Errorf("failed to get WASI module")		config.Release()		vm.Release()	if wasi == nil {	wasi := vm.GetImportModule(wasmedge.WASI)	// Required for wasm32-wasi target even if plugin doesn't use WASI features	// Step 3: Initialize WASI interface	}		return nil, fmt.Errorf("failed to create WasmEdge VM")		config.Release()	if vm == nil {	vm := wasmedge.NewVMWithConfig(config)	// Each plugin gets its own isolated VM for sandboxing	// Step 2: Create VM instance with the configuration	}		return nil, fmt.Errorf("failed to create WasmEdge configuration")	if config == nil {	config := wasmedge.NewConfigure(wasmedge.WASI)	// This enables wasm32-wasi modules to work even if they don't use WASI syscalls	// Step 1: Create configuration with WASI support	}		return nil, fmt.Errorf("plugin file not found: %w", err)	if _, err := os.Stat(path); err != nil {	// Verify file exists before attempting to loadfunc LoadPlugin(path string) (*Plugin, error) {//   defer plugin.Close()//   }//       return err//   if err != nil {//   plugin, err := runtime.LoadPlugin("plugin.wasm")// Example://// The returned Plugin must be closed with Close() when no longer needed.// If any step fails, all resources are cleaned up before returning the error.//// 6. Instantiates the module (allocates memory, prepares exports)// 5. Validates module structure and bytecode// 4. Loads the WASM file from disk// 3. Initializes WASI interface (required for wasm32-wasi modules)// 2. Initializes a new VM with the configuration// 1. Creates WasmEdge configuration with WASI support// The function performs the complete loading sequence://// LoadPlugin loads a WebAssembly module from disk and creates an isolated VM instance.}	config *wasmedge.Configure // VM configuration (WASI support)	vm     *wasmedge.VM      // WasmEdge VM instance (owns module execution)	path   string            // Original file path for error reportingtype Plugin struct {// Plugins are not safe for concurrent use - caller must synchronize access.// Each Plugin owns its WasmEdge VM, configuration, and lifecycle state.// Plugin represents a loaded WebAssembly plugin with its own isolated VM instance.)	"github.com/second-state/WasmEdge-go/wasmedge"	"os"
+	"os"
+
+	"github.com/second-state/WasmEdge-go/wasmedge"
+)
+
+// Plugin represents a loaded WebAssembly plugin with its own isolated VM instance.
+// Each Plugin owns its WasmEdge VM, configuration, and lifecycle state.
+// Plugins are not safe for concurrent use - caller must synchronize access.
+type Plugin struct {
+	path   string                // Original file path for error reporting
+	vm     *wasmedge.VM          // WasmEdge VM instance (owns module execution)
+	config *wasmedge.Configure   // VM configuration (WASI support)
+}
+
+// LoadPlugin loads a WebAssembly module from disk and creates an isolated VM instance.
+//
+// The function performs the complete loading sequence:
+// 1. Creates WasmEdge configuration with WASI support
+// 2. Initializes a new VM with the configuration
+// 3. Initializes WASI interface (required for wasm32-wasi modules)
+// 4. Loads the WASM file from disk
+// 5. Validates module structure and bytecode
+// 6. Instantiates the module (allocates memory, prepares exports)
+//
+// If any step fails, all resources are cleaned up before returning the error.
+// The returned Plugin must be closed with Close() when no longer needed.
+//
+// Example:
+//   plugin, err := runtime.LoadPlugin("plugin.wasm")
+//   if err != nil {
+//       return err
+//   }
+//   defer plugin.Close()
+func LoadPlugin(path string) (*Plugin, error) {
+	// Verify file exists before attempting to load
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("plugin file not found: %w", err)
+	}
+
+	// Step 1: Create configuration with WASI support
+	// This enables wasm32-wasi modules to work even if they don't use WASI syscalls
+	config := wasmedge.NewConfigure(wasmedge.WASI)
+	if config == nil {
+		return nil, fmt.Errorf("failed to create WasmEdge configuration")
+	}
+
+	// Step 2: Create VM instance with the configuration
+	// Each plugin gets its own isolated VM for sandboxing
+	vm := wasmedge.NewVMWithConfig(config)
+	if vm == nil {
+		config.Release()
+		return nil, fmt.Errorf("failed to create WasmEdge VM")
+	}
+
+	// Step 3: Initialize WASI interface
+	// Required for wasm32-wasi target even if plugin doesn't use WASI features
+	wasi := vm.GetImportModule(wasmedge.WASI)
+	if wasi == nil {
+		vm.Release()
+		config.Release()
+		return nil, fmt.Errorf("failed to get WASI module")
+	}
+	
+	// Initialize WASI with minimal environment
+	// No command-line args, inherit host environment, no pre-opened directories
+	wasi.InitWasi(
+		[]string{},      // No command-line arguments
+		os.Environ(),    // Inherit host environment variables
+		[]string{},      // No pre-opened directories (sandbox)
+	)
+
+	// Step 4: Load WASM file from disk
+	// Reads and parses the WebAssembly binary
+	if err := vm.LoadWasmFile(path); err != nil {
+		vm.Release()
+		config.Release()
+		return nil, fmt.Errorf("failed to load WASM file %s: %w", path, err)
+	}
+
+	// Step 5: Validate the module
+	// Verifies bytecode structure, type checking, and instruction validity
+	if err := vm.Validate(); err != nil {
+		vm.Release()
+		config.Release()
+		return nil, fmt.Errorf("WASM module validation failed for %s: %w", path, err)
+	}
+
+	// Step 6: Instantiate the module
+	// Allocates linear memory, initializes globals, runs start functions (if any)
+	// After this point, exports are callable
+	if err := vm.Instantiate(); err != nil {
+		vm.Release()
+		config.Release()
+		return nil, fmt.Errorf("WASM module instantiation failed for %s: %w", path, err)
+	}
+
+	// Success - return initialized plugin
+	return &Plugin{
+		path:   path,
+		vm:     vm,
+		config: config,
+	}, nil
+}
+
+// Close releases all VM resources owned by this plugin.
+//
+// This method must be called when the plugin is no longer needed to prevent
+// resource leaks. It's safe to call Close() multiple times - subsequent calls
+// are no-ops.
+//
+// After Close() is called, Init(), Execute(), and Cleanup() must not be called.
+//
+// Example:
+//   plugin, _ := runtime.LoadPlugin("plugin.wasm")
+//   defer plugin.Close()
+func (p *Plugin) Close() {
+	if p.vm != nil {
+		p.vm.Release()
+		p.vm = nil
+	}
+	if p.config != nil {
+		p.config.Release()
+		p.config = nil
+	}
+}
+
+// Path returns the original file path of the loaded plugin.
+// Useful for logging and error reporting.
+func (p *Plugin) Path() string {
+	return p.path
+}

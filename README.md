@@ -3,13 +3,23 @@ Build a Go microservice that can load and execute WebAssembly plugins written in
 
 ## Project Structure
 
-This project includes two plugin examples:
+This project includes:
 
-### 1. Simple Plugin ([plugin.cpp](plugin.cpp))
+### C++ Plugins
+
+**1. Simple Plugin ([plugin.cpp](plugin.cpp))**  
 Minimal example with single exported function - ideal for learning
 
-### 2. Production ABI Plugin ([plugin_abi.cpp](plugin_abi.cpp))
+**2. Production ABI Plugin ([plugin_abi.cpp](plugin_abi.cpp))**  
 Stable ABI with lifecycle management, versioning, and error handling - production-ready
+
+### Go Runtime Package
+
+**[runtime/](runtime/)** - Clean, testable Go package for loading and executing WASM plugins
+- [loader.go](runtime/loader.go) - Plugin loading, validation, and resource management
+- [executor.go](runtime/executor.go) - ABI function execution (init/process/cleanup)
+- Each plugin runs in an isolated VM instance (sandboxed)
+- No global state - fully testable API
 
 ## Simple Plugin Example
 
@@ -28,7 +38,7 @@ wasmedge --reactor plugin.wasm process 21
 
 **3. Run with Go host:**
 ```bash
-go run main.go
+go run cmd/simple/main.go
 # Output: Result: 43
 ```
 
@@ -62,7 +72,7 @@ clang++ \
 ### Run ABI Plugin
 
 ```bash
-go run main_abi.go
+go run cmd/abi/main_abi.go
 ```
 
 **Expected output:**
@@ -76,13 +86,18 @@ Plugin cleaned up successfully
 
 ### Files
 
-**Plugins:**
+**C++ Plugins:**
 - [plugin.cpp](plugin.cpp) - Simple single-function plugin
 - [plugin_abi.cpp](plugin_abi.cpp) - Production ABI plugin with lifecycle and versioning
 
-**Go Hosts:**
-- [main.go](main.go) - Simple host for plugin.wasm
-- [main_abi.go](main_abi.go) - Full ABI host with version checking and lifecycle
+**Go Runtime Package:**
+- [runtime/loader.go](runtime/loader.go) - Plugin loading and VM management
+- [runtime/executor.go](runtime/executor.go) - ABI function execution
+
+**Go Host Examples:**
+- [cmd/example/example.go](cmd/example/example.go) - **Recommended**: Uses runtime package (clean API)
+- [cmd/simple/main.go](cmd/simple/main.go) - Direct WasmEdge SDK usage (simple plugin)
+- [cmd/abi/main_abi.go](cmd/abi/main_abi.go) - Direct WasmEdge SDK usage (full ABI)
 
 **Documentation:**
 - [ABI.md](ABI.md) - **Complete ABI specification, versioning strategy, and common pitfalls**
@@ -148,27 +163,23 @@ extern "C" int process(int x);
 
 The current implementation returns `(x * 2) + 1` but can be modified for any deterministic computation.
 
-## Go Host Program
+## Go Host Programs
 
-### Simple Host (main.go)
+### Simple Host (cmd/simple/main.go)
 
-Direct execution without lifecycle management:
+Direct WasmEdge SDK usage without abstractions:
 
 ```bash
-go run main.go
+go run cmd/simple/main.go
 # Output: Result: 43
 ```
 
-### ABI Host (main_abi.go)
+### ABI Host (cmd/abi/main_abi.go)
 
-Full production implementation with:
-- Version compatibility checking
-- Proper init/cleanup lifecycle
-- Error code handling
-- Diagnostic information
+Full ABI implementation with version checking and lifecycle:
 
 ```bash
-go run main_abi.go
+go run cmd/abi/main_abi.go
 # Output:
 # Plugin ABI version: v1.0.0
 # Plugin initialized successfully
@@ -176,6 +187,43 @@ go run main_abi.go
 # Total process() calls: 1
 # Plugin cleaned up successfully
 ```
+
+### Runtime Package Example (example.go)
+
+**Recommended approach** - Uses the clean `runtime` package:
+
+```bash
+go run cmd/example/example.go
+# Output:
+# Loaded plugin: plugin_abi.wasm
+# Plugin initialized successfully
+# Result: process(21) = 43
+# Result: process(50) = 101
+# Plugin cleaned up successfully
+```
+
+**Usage:**
+```go
+import "github.com/mrhapile/wasm-plugin-system/runtime"
+
+// Load plugin (validates and instantiates)
+plugin, err := runtime.LoadPlugin("plugin_abi.wasm")
+defer plugin.Close()
+
+// Initialize
+plugin.Init()
+defer plugin.Cleanup()
+
+// Execute
+result, err := plugin.Execute(21)
+```
+
+**Benefits:**
+- Clean API - no WasmEdge details exposed
+- Automatic resource cleanup
+- Proper error wrapping with context
+- Testable - no global state
+- Idiomatic Go code
 
 ## Installation
 
