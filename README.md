@@ -97,15 +97,23 @@ Plugin cleaned up successfully
 **C++ Plugins:**
 - [plugin.cpp](plugin.cpp) - Simple single-function plugin
 - [plugin_abi.cpp](plugin_abi.cpp) - Production ABI plugin with lifecycle and versioning
+- [plugins/hello/hello.cpp](plugins/hello/hello.cpp) - Example plugin for HTTP API
 
 **Go Runtime Package:**
 - [runtime/loader.go](runtime/loader.go) - Plugin loading and VM management
 - [runtime/executor.go](runtime/executor.go) - ABI function execution
 
 **Go Host Examples:**
-- [cmd/example/example.go](cmd/example/example.go) - **Recommended**: Uses runtime package (clean API)
+- [cmd/server/main.go](cmd/server/main.go) - **HTTP API server** for plugin execution
+- [cmd/example/example.go](cmd/example/example.go) - Uses runtime package (clean API)
 - [cmd/simple/main.go](cmd/simple/main.go) - Direct WasmEdge SDK usage (simple plugin)
 - [cmd/abi/main_abi.go](cmd/abi/main_abi.go) - Direct WasmEdge SDK usage (full ABI)
+
+**Test Suites:**
+- [runtime/loader_test.go](runtime/loader_test.go) - Unit tests for plugin loading
+- [runtime/executor_test.go](runtime/executor_test.go) - Unit tests for execution
+- [runtime/mock_test.go](runtime/mock_test.go) - Mocked tests with gomonkey
+- [cmd/server/handler_test.go](cmd/server/handler_test.go) - HTTP integration tests
 
 **Documentation:**
 - [ABI.md](ABI.md) - **Complete ABI specification, versioning strategy, and common pitfalls**
@@ -306,6 +314,44 @@ curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/insta
 go mod download
 ```
 
+## Testing
+
+The project includes comprehensive unit and integration tests using Ginkgo v2, Gomega, testify, and gomonkey.
+
+### Run All Tests
+
+```bash
+# Run all tests with verbose output
+go test -v ./...
+
+# Run with Ginkgo CLI (recommended)
+ginkgo -v ./...
+```
+
+### Run Specific Test Suites
+
+```bash
+# Runtime package unit tests
+go test -v ./runtime/...
+
+# HTTP server integration tests
+go test -v ./cmd/server/...
+```
+
+### Test Coverage
+
+| Package | Tests |
+|---------|-------|
+| `runtime` | LoadPlugin, Init, Execute, Cleanup, Close, resource management |
+| `cmd/server` | POST /run, JSON validation, error handling, HTTP status codes |
+
+### Testing Stack
+
+- **Ginkgo v2** - BDD-style test framework
+- **Gomega** - Expressive matchers
+- **testify** - Additional assertions
+- **gomonkey** - Function mocking for error path testing
+
 ## Learn More
 
 - [ABI.md](ABI.md) - Complete ABI design guide with:
@@ -316,4 +362,5 @@ go mod download
   - Best practices for production plugins
 
 - [BUILD.md](BUILD.md) - Detailed compilation guide with explanations for every compiler flag
+
 
