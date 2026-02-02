@@ -20,9 +20,9 @@ func main() {
 	// Required for wasm32-wasi modules even if not using WASI syscalls
 	wasi := vm.GetImportModule(wasmedge.WASI)
 	wasi.InitWasi(
-		os.Args[1:],     // Command line arguments
-		os.Environ(),    // Environment variables
-		[]string{"."},   // Pre-opened directories
+		os.Args[1:],   // Command line arguments
+		os.Environ(),  // Environment variables
+		[]string{"."}, // Pre-opened directories
 	)
 
 	// Step 4: Load WASM file from disk

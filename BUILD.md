@@ -1,6 +1,8 @@
 # Building the WebAssembly Plugin
 
-## Compilation Command
+## Simple Plugin (plugin.cpp)
+
+Basic single-function plugin for quick testing:
 
 ```bash
 clang++ \
@@ -11,6 +13,26 @@ clang++ \
   -O3 \
   -o plugin.wasm \
   plugin.cpp
+```
+
+## Stable ABI Plugin (plugin_abi.cpp)
+
+Production-ready plugin with full lifecycle and versioning:
+
+```bash
+clang++ \
+  --target=wasm32-wasi \
+  -nostdlib \
+  -Wl,--no-entry \
+  -Wl,--export=get_abi_version \
+  -Wl,--export=init \
+  -Wl,--export=process \
+  -Wl,--export=cleanup \
+  -Wl,--export=get_call_count \
+  -Wl,--export=is_initialized \
+  -O3 \
+  -o plugin_abi.wasm \
+  plugin_abi.cpp
 ```
 
 ## Flag Explanations
@@ -62,6 +84,8 @@ wasm-objdump -x plugin.wasm | grep -A5 "Export"
 
 ## Running with WasmEdge
 
+### Simple Plugin (plugin.wasm)
+
 ```bash
 # Call the process function with argument 21
 wasmedge --reactor plugin.wasm process 21
@@ -69,4 +93,46 @@ wasmedge --reactor plugin.wasm process 21
 # Expected output: 43 (because 21 * 2 + 1 = 43)
 ```
 
+### ABI Plugin (plugin_abi.wasm)
+
+```bash
+# Check version
+wasmedge --reactor plugin_abi.wasm get_abi_version
+# Output: 10000 (v1.0.0)
+
+# Execute with proper lifecycle
+wasmedge --reactor plugin_abi.wasm init
+# Output: 0 (success)
+
+wasmedge --reactor plugin_abi.wasm process 21
+# Output: 43
+
+wasmedge --reactor plugin_abi.wasm cleanup
+# Output: 0 (success)
+```
+
 Note: The `--reactor` flag tells WasmEdge to treat this as a reactor module (library) rather than a command module with _start.
+
+## ABI Verification
+
+After compiling plugin_abi.wasm, verify all required exports:
+
+```bash
+wasm-objdump -x plugin_abi.wasm | grep -A20 "Export"
+```
+
+Should show:
+```
+Export[0]:
+  - func[0] <get_abi_version>
+Export[1]:
+  - func[1] <init>
+Export[2]:
+  - func[2] <process>
+Export[3]:
+  - func[3] <cleanup>
+Export[4]:
+  - func[4] <get_call_count>
+Export[5]:
+  - func[5] <is_initialized>
+```
