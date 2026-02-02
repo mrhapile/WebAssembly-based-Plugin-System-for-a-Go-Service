@@ -6,11 +6,11 @@ import (
 
 // ABI error codes returned by plugin functions
 const (
-	ABISuccess                = 0  // Operation completed successfully
-	ABIErrorNotInitialized    = -1 // Plugin not initialized (init not called)
+	ABISuccess                 = 0  // Operation completed successfully
+	ABIErrorNotInitialized     = -1 // Plugin not initialized (init not called)
 	ABIErrorAlreadyInitialized = -2 // Plugin already initialized (init called twice)
-	ABIErrorInvalidInput      = -3 // Invalid input parameter
-	ABIErrorInternal          = -4 // Internal plugin error
+	ABIErrorInvalidInput       = -3 // Invalid input parameter
+	ABIErrorInternal           = -4 // Internal plugin error
 )
 
 // Init initializes the plugin by calling its exported "init" function.
@@ -41,7 +41,7 @@ func (p *Plugin) Init() error {
 
 	// Extract return code (i32 -> int32)
 	returnCode := result[0].(int32)
-	
+
 	// Check for error codes
 	if returnCode != ABISuccess {
 		return fmt.Errorf("init() returned error code %d for %s: %s",

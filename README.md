@@ -21,6 +21,14 @@ Stable ABI with lifecycle management, versioning, and error handling - productio
 - Each plugin runs in an isolated VM instance (sandboxed)
 - No global state - fully testable API
 
+### HTTP API Server
+
+**[cmd/server/main.go](cmd/server/main.go)** - Minimal HTTP API for executing plugins
+- POST `/run` endpoint
+- Loads plugins from `./plugins/<name>/<name>.wasm`
+- Full lifecycle management per request
+- JSON request/response format
+
 ## Simple Plugin Example
 
 ### Quick Start
@@ -225,6 +233,67 @@ result, err := plugin.Execute(21)
 - Testable - no global state
 - Idiomatic Go code
 
+## HTTP API Server
+
+The HTTP server provides a REST API for executing WASM plugins.
+
+### Start the Server
+
+```bash
+go run cmd/server/main.go
+# Starting WASM plugin server on :8080
+```
+
+### Execute a Plugin
+
+**Request:**
+```bash
+curl -X POST http://localhost:8080/run \
+  -H "Content-Type: application/json" \
+  -d '{"plugin": "hello", "input": 21}'
+```
+
+**Response:**
+```json
+{"output": 43}
+```
+
+### Plugin Directory Structure
+
+Plugins are loaded from `./plugins/<name>/<name>.wasm`:
+
+```
+plugins/
+└── hello/
+    ├── hello.cpp   # Source code
+    └── hello.wasm  # Compiled WASM module
+```
+
+### Build the Example Plugin
+
+```bash
+cd plugins/hello
+clang++ --target=wasm32-wasi -nostdlib -Wl,--no-entry \
+  -Wl,--export=init -Wl,--export=process -Wl,--export=cleanup \
+  -O3 -o hello.wasm hello.cpp
+```
+
+### Error Handling
+
+The server returns appropriate HTTP status codes:
+
+| Status | Description |
+|--------|-------------|
+| 200 | Success - plugin executed |
+| 400 | Bad request - invalid JSON or plugin name |
+| 405 | Method not allowed - use POST |
+| 500 | Internal error - plugin load/execution failed |
+
+**Error response format:**
+```json
+{"error": "failed to load plugin: plugin file not found"}
+```
+
 ## Installation
 
 **1. Install WasmEdge:**
@@ -247,3 +316,4 @@ go mod download
   - Best practices for production plugins
 
 - [BUILD.md](BUILD.md) - Detailed compilation guide with explanations for every compiler flag
+

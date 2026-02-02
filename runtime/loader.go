@@ -11,9 +11,9 @@ import (
 // Each Plugin owns its WasmEdge VM, configuration, and lifecycle state.
 // Plugins are not safe for concurrent use - caller must synchronize access.
 type Plugin struct {
-	path   string                // Original file path for error reporting
-	vm     *wasmedge.VM          // WasmEdge VM instance (owns module execution)
-	config *wasmedge.Configure   // VM configuration (WASI support)
+	path   string              // Original file path for error reporting
+	vm     *wasmedge.VM        // WasmEdge VM instance (owns module execution)
+	config *wasmedge.Configure // VM configuration (WASI support)
 }
 
 // LoadPlugin loads a WebAssembly module from disk and creates an isolated VM instance.
@@ -30,11 +30,12 @@ type Plugin struct {
 // The returned Plugin must be closed with Close() when no longer needed.
 //
 // Example:
-//   plugin, err := runtime.LoadPlugin("plugin.wasm")
-//   if err != nil {
-//       return err
-//   }
-//   defer plugin.Close()
+//
+//	plugin, err := runtime.LoadPlugin("plugin.wasm")
+//	if err != nil {
+//	    return err
+//	}
+//	defer plugin.Close()
 func LoadPlugin(path string) (*Plugin, error) {
 	// Verify file exists before attempting to load
 	if _, err := os.Stat(path); err != nil {
@@ -64,13 +65,13 @@ func LoadPlugin(path string) (*Plugin, error) {
 		config.Release()
 		return nil, fmt.Errorf("failed to get WASI module")
 	}
-	
+
 	// Initialize WASI with minimal environment
 	// No command-line args, inherit host environment, no pre-opened directories
 	wasi.InitWasi(
-		[]string{},      // No command-line arguments
-		os.Environ(),    // Inherit host environment variables
-		[]string{},      // No pre-opened directories (sandbox)
+		[]string{},   // No command-line arguments
+		os.Environ(), // Inherit host environment variables
+		[]string{},   // No pre-opened directories (sandbox)
 	)
 
 	// Step 4: Load WASM file from disk
@@ -115,8 +116,9 @@ func LoadPlugin(path string) (*Plugin, error) {
 // After Close() is called, Init(), Execute(), and Cleanup() must not be called.
 //
 // Example:
-//   plugin, _ := runtime.LoadPlugin("plugin.wasm")
-//   defer plugin.Close()
+//
+//	plugin, _ := runtime.LoadPlugin("plugin.wasm")
+//	defer plugin.Close()
 func (p *Plugin) Close() {
 	if p.vm != nil {
 		p.vm.Release()
