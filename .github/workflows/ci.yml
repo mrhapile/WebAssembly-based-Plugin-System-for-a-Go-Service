@@ -1,0 +1,236 @@
+# =============================================================================
+# CI Pipeline for Go + WebAssembly Plugin System
+# =============================================================================
+#
+# This workflow builds C++ plugins to WebAssembly and runs Go tests.
+#
+# Pipeline stages:
+#   1. Setup environment (Go, clang, WasmEdge)
+#   2. Build WASM plugins from C++ source
+#   3. Run Go unit tests with coverage
+#   4. Run integration tests
+#   5. Upload artifacts
+#
+# =============================================================================
+
+name: CI
+
+# -----------------------------------------------------------------------------
+# Trigger Configuration
+# -----------------------------------------------------------------------------
+# Run on:
+#   - Push to main branch (merge commits)
+#   - Pull requests targeting main (for review)
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# -----------------------------------------------------------------------------
+# Environment Variables
+# -----------------------------------------------------------------------------
+# Centralized configuration for easy maintenance
+env:
+  GO_VERSION: "1.24"
+  WASMEDGE_VERSION: "0.14.0"
+
+# -----------------------------------------------------------------------------
+# Jobs
+# -----------------------------------------------------------------------------
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    # Fail fast: cancel all jobs if any step fails
+    # This is the default behavior, but we're explicit for clarity
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+
+    steps:
+      # =======================================================================
+      # STEP 1: Checkout Repository
+      # =======================================================================
+      # Fetch the repository code with full history for accurate blame/coverage
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # =======================================================================
+      # STEP 2: Setup Go
+      # =======================================================================
+      # Install Go and configure the Go environment
+      # The official setup-go action handles PATH and caching efficiently
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # Enable built-in Go module caching
+          # Caches ~/go/pkg/mod based on go.sum hash
+          cache: true
+
+      # =======================================================================
+      # STEP 3: Install clang for C++ to WASM Compilation
+      # =======================================================================
+      # clang provides the wasm32-wasi target for compiling C++ to WebAssembly
+      # Ubuntu's clang package includes the necessary WASM backend
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld
+          clang --version
+
+      # =======================================================================
+      # STEP 4: Install WasmEdge Runtime
+      # =======================================================================
+      # WasmEdge is the WebAssembly runtime used to execute plugins
+      # The install script sets up the runtime and development libraries
+      # needed by the wasmedge-go SDK
+      - name: Install WasmEdge ${{ env.WASMEDGE_VERSION }}
+        run: |
+          # Download and run official WasmEdge installer
+          curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- -v ${{ env.WASMEDGE_VERSION }}
+
+          # Source the environment to get WasmEdge in PATH
+          # The installer creates ~/.wasmedge/env
+          source ~/.wasmedge/env
+
+          # Verify installation
+          wasmedge --version
+
+          # Make WasmEdge available for subsequent steps
+          echo "$HOME/.wasmedge/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=$HOME/.wasmedge/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$HOME/.wasmedge/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=$HOME/.wasmedge/include:$C_INCLUDE_PATH" >> $GITHUB_ENV
+          echo "CPLUS_INCLUDE_PATH=$HOME/.wasmedge/include:$CPLUS_INCLUDE_PATH" >> $GITHUB_ENV
+
+      # =======================================================================
+      # STEP 5: Download Go Dependencies
+      # =======================================================================
+      # Download and verify Go module dependencies
+      # This step is cached by setup-go but we run it explicitly for visibility
+      - name: Download Go modules
+        run: |
+          go mod download
+          go mod verify
+
+      # =======================================================================
+      # STEP 6: Build C++ Plugins to WebAssembly
+      # =======================================================================
+      # Compile all C++ plugins to .wasm files
+      # Each plugin follows the stable ABI: init(), process(), cleanup()
+      - name: Build WASM plugins
+        run: |
+          echo "=== Building hello plugin ==="
+          cd plugins/hello
+          clang++ \
+            --target=wasm32-wasi \
+            -nostdlib \
+            -Wl,--no-entry \
+            -Wl,--export=init \
+            -Wl,--export=process \
+            -Wl,--export=cleanup \
+            -O3 \
+            -o hello.wasm \
+            hello.cpp
+
+          # Verify the build
+          ls -la hello.wasm
+          file hello.wasm
+
+          echo "=== WASM plugins built successfully ==="
+
+      # =======================================================================
+      # STEP 7: Build Go Application
+      # =======================================================================
+      # Compile all Go packages to verify the code builds
+      # This catches compilation errors before running tests
+      - name: Build Go application
+        run: |
+          go build -v ./...
+
+      # =======================================================================
+      # STEP 8: Run Go Vet
+      # =======================================================================
+      # Static analysis to catch common Go mistakes
+      # Runs before tests to fail fast on obvious issues
+      - name: Run go vet
+        run: |
+          go vet ./...
+
+      # =======================================================================
+      # STEP 9: Run Unit Tests with Coverage
+      # =======================================================================
+      # Run tests using go test with coverage
+      # Ginkgo tests are compatible with go test
+      #
+      # Coverage flags:
+      #   -cover: Enable coverage analysis
+      #   -coverprofile: Write coverage data to file
+      #   -covermode=atomic: Accurate coverage for concurrent code
+      - name: Run unit tests
+        run: |
+          go test -v -race -cover -coverprofile=coverage.out -covermode=atomic ./...
+
+      # =======================================================================
+      # STEP 10: Print Coverage Summary
+      # =======================================================================
+      # Display coverage percentage for each package
+      # Useful for quick visibility in CI logs
+      - name: Print coverage summary
+        run: |
+          echo "=== Coverage Summary ==="
+          go tool cover -func=coverage.out
+
+          # Extract total coverage percentage
+          TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
+          echo ""
+          echo "Total coverage: $TOTAL"
+
+      # =======================================================================
+      # STEP 11: Upload Coverage Report
+      # =======================================================================
+      # Upload coverage data as an artifact for later analysis
+      # Can be integrated with Codecov, Coveralls, etc.
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 30
+
+      # =======================================================================
+      # STEP 12: Upload WASM Artifacts
+      # =======================================================================
+      # Upload compiled WASM plugins as artifacts
+      # Useful for:
+      #   - Debugging test failures
+      #   - Deploying to staging/production
+      #   - Manual verification
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-plugins
+          path: |
+            plugins/**/*.wasm
+          retention-days: 30
+
+      # =======================================================================
+      # STEP 13: Summary
+      # =======================================================================
+      # Add a summary to the GitHub Actions run
+      - name: Generate summary
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Go application built successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ WASM plugins compiled" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 wasm-plugins: Compiled WASM binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- 📊 coverage-report: Test coverage data" >> $GITHUB_STEP_SUMMARY
