@@ -4,10 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
+	"os"
 
+	"github.com/mrhapile/wasm-plugin-system/fluid"
 	"github.com/mrhapile/wasm-plugin-system/runtime"
 )
+
+// Server encapsulates the HTTP server dependencies.
+//
+// Using a struct instead of global variables allows:
+//   - Easy testing with mock PluginStore
+//   - Multiple server instances with different configurations
+//   - Clear dependency injection
+type Server struct {
+	store fluid.PluginStore
+}
+
+// NewServer creates a Server with the given plugin store.
+func NewServer(store fluid.PluginStore) *Server {
+	return &Server{store: store}
+}
 
 // Request represents the JSON request body for POST /run
 type Request struct {
@@ -29,7 +45,7 @@ type ErrorResponse struct {
 //
 // Request lifecycle per call:
 // 1. Parse and validate JSON request
-// 2. Construct plugin path: ./plugins/<plugin>/<plugin>.wasm
+// 2. Resolve plugin path via PluginStore
 // 3. Load plugin (creates isolated VM)
 // 4. Initialize plugin (calls init())
 // 5. Execute plugin (calls process(input))
@@ -38,7 +54,7 @@ type ErrorResponse struct {
 // 8. Return JSON response
 //
 // On any error, cleanup is guaranteed via defer.
-func handleRun(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -62,8 +78,13 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Construct plugin path: ./plugins/<plugin>/<plugin>.wasm
-	pluginPath := filepath.Join("plugins", req.Plugin, req.Plugin+".wasm")
+	// Resolve plugin path via PluginStore
+	// This abstracts the difference between local and Fluid storage
+	pluginPath, err := s.store.Resolve(req.Plugin)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("plugin not found: %s", req.Plugin))
+		return
+	}
 
 	// Execute plugin with full lifecycle management
 	output, err := executePlugin(pluginPath, req.Input)
@@ -150,8 +171,37 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func main() {
+	// Determine which plugin store to use based on environment.
+	//
+	// In production with Fluid:
+	//   PLUGIN_STORE=fluid
+	//   FLUID_MOUNT_PATH=/mnt/fluid/plugins
+	//
+	// In development (default):
+	//   Plugins are loaded from ./plugins/
+	var store fluid.PluginStore
+
+	storeType := os.Getenv("PLUGIN_STORE")
+	switch storeType {
+	case "fluid":
+		// Production: use Fluid dataset mount
+		mountPath := os.Getenv("FLUID_MOUNT_PATH")
+		if mountPath == "" {
+			mountPath = "/mnt/fluid/plugins" // Default Fluid mount path
+		}
+		store = fluid.NewFluidPluginStore(mountPath)
+		fmt.Printf("Using Fluid plugin store: %s\n", mountPath)
+	default:
+		// Development: use local filesystem
+		store = fluid.NewLocalPluginStore("./plugins")
+		fmt.Println("Using local plugin store: ./plugins")
+	}
+
+	// Create server with the plugin store
+	server := NewServer(store)
+
 	// Register the /run endpoint
-	http.HandleFunc("/run", handleRun)
+	http.HandleFunc("/run", server.handleRun)
 
 	// Start the server
 	addr := ":8080"
@@ -159,8 +209,6 @@ func main() {
 	fmt.Println("POST /run - Execute a plugin")
 	fmt.Println("  Request:  { \"plugin\": \"hello\", \"input\": 21 }")
 	fmt.Println("  Response: { \"output\": 43 }")
-	fmt.Println()
-	fmt.Printf("Plugin path format: ./plugins/<plugin>/<plugin>.wasm\n")
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		fmt.Printf("Server error: %v\n", err)

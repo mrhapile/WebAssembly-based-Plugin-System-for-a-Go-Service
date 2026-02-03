@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/mrhapile/wasm-plugin-system/fluid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
@@ -16,14 +17,21 @@ import (
 var _ = Describe("HTTP Server", func() {
 	var (
 		server *httptest.Server
+		store  fluid.PluginStore
 	)
 
 	// Setup: Create test server before each test
 	BeforeEach(func() {
+		// Use LocalPluginStore for testing (relative to project root)
+		store = fluid.NewLocalPluginStore("plugins")
+
+		// Create server with the test store
+		srv := NewServer(store)
+
 		// Use httptest.Server to create a local HTTP server for testing
 		// This avoids binding to actual ports and is safe for parallel tests
 		mux := http.NewServeMux()
-		mux.HandleFunc("/run", handleRun)
+		mux.HandleFunc("/run", srv.handleRun)
 		server = httptest.NewServer(mux)
 	})
 
@@ -144,22 +152,22 @@ var _ = Describe("HTTP Server", func() {
 
 		// =====================================================================
 		// TEST: Unknown plugin name
-		// Why: Must return 500 when plugin file doesn't exist, with a clear
+		// Why: Must return 404 when plugin file doesn't exist, with a clear
 		//      error message.
 		// =====================================================================
 		Context("with unknown plugin name", func() {
-			It("should return 500 Internal Server Error", func() {
+			It("should return 404 Not Found", func() {
 				reqBody := Request{Plugin: "nonexistent", Input: 21}
 				jsonBody, _ := json.Marshal(reqBody)
 
 				resp, err := http.Post(server.URL+"/run", "application/json", bytes.NewBuffer(jsonBody))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
+				Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
 
 				var errorResp ErrorResponse
 				json.NewDecoder(resp.Body).Decode(&errorResp)
-				Expect(errorResp.Error).To(ContainSubstring("failed to load plugin"))
+				Expect(errorResp.Error).To(ContainSubstring("plugin not found"))
 			})
 		})
 
