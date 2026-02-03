@@ -12,7 +12,7 @@ import (
 
 var _ = Describe("Loader", func() {
 	var (
-		testPluginDir  string
+		testPluginDir   string
 		validPluginPath string
 	)
 
@@ -90,7 +90,7 @@ var _ = Describe("Loader", func() {
 				// Create a temporary invalid WASM file
 				tmpDir, err := os.MkdirTemp("", "wasm-test-*")
 				Expect(err).NotTo(HaveOccurred())
-				
+
 				invalidWasmPath = filepath.Join(tmpDir, "invalid.wasm")
 				err = os.WriteFile(invalidWasmPath, []byte("not a valid wasm file"), 0644)
 				Expect(err).NotTo(HaveOccurred())

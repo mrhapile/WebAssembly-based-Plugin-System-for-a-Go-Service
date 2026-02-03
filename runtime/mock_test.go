@@ -15,7 +15,9 @@ import (
 // =========================================================================
 // Mock Tests using gomonkey
 // Why: Test error handling paths that are difficult to trigger with real
-//      WASM plugins. gomonkey allows us to mock function behavior.
+//
+//	WASM plugins. gomonkey allows us to mock function behavior.
+//
 // =========================================================================
 var _ = Describe("Mocked Tests", func() {
 	var (
@@ -127,7 +129,9 @@ var _ = Describe("Mocked Tests", func() {
 // =========================================================================
 // TEST: Resource cleanup verification
 // Why: Ensure that Close() actually releases resources and subsequent calls
-//      to Init/Execute/Cleanup fail appropriately.
+//
+//	to Init/Execute/Cleanup fail appropriately.
+//
 // =========================================================================
 var _ = Describe("Resource Cleanup", func() {
 	var (
