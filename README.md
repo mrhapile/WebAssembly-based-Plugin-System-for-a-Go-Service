@@ -1,366 +1,321 @@
-# WebAssembly-based-Plugin-System-for-a-Go-Service
-Build a Go microservice that can load and execute WebAssembly plugins written in C/C++ at runtime.
+# WASM Plugin System for Go Services
 
-## Project Structure
+A sandboxed, hot-swappable plugin system for Go services using WebAssembly. Plugins are written in C/C++, compiled to `wasm32-wasi`, and executed in isolated WasmEdge runtimes. The system provides a strict ABI contract, lifecycle management, and supports both local filesystem and Fluid dataset storage backends.
 
-This project includes:
+## Problem Statement
 
-### C++ Plugins
+Traditional plugin systems in Go face fundamental challenges:
 
-**1. Simple Plugin ([plugin.cpp](plugin.cpp))**  
-Minimal example with single exported function - ideal for learning
+- **Native plugins** (`plugin` package) share the host process memory, making crashes and memory corruption possible. They require exact Go version matching and cannot be unloaded.
+- **RPC-based plugins** (e.g., HashiCorp go-plugin) introduce network overhead, serialization complexity, and process management burden.
+- **Scripting engines** (Lua, JavaScript) add large runtime dependencies and lack compile-time type safety.
 
-**2. Production ABI Plugin ([plugin_abi.cpp](plugin_abi.cpp))**  
-Stable ABI with lifecycle management, versioning, and error handling - production-ready
+These approaches trade off between safety, performance, and operational complexity. None provide true isolation with near-native performance.
 
-### Go Runtime Package
+## Why WebAssembly
 
-**[runtime/](runtime/)** - Clean, testable Go package for loading and executing WASM plugins
-- [loader.go](runtime/loader.go) - Plugin loading, validation, and resource management
-- [executor.go](runtime/executor.go) - ABI function execution (init/process/cleanup)
-- Each plugin runs in an isolated VM instance (sandboxed)
-- No global state - fully testable API
+WebAssembly addresses these constraints:
 
-### HTTP API Server
+| Property | Benefit |
+|----------|---------|
+| **Memory isolation** | Each plugin runs in a sandboxed linear memory. Host memory is inaccessible. |
+| **Capability-based security** | Plugins have no filesystem, network, or syscall access unless explicitly granted. |
+| **Deterministic execution** | Same inputs produce same outputs. No undefined behavior from uninitialized memory. |
+| **Language agnostic** | Plugins can be written in C, C++, Rust, or any language targeting `wasm32-wasi`. |
+| **Hot-swappable** | Plugins can be loaded and unloaded at runtime without service restart. |
+| **Portable** | Same `.wasm` binary runs on Linux, macOS, Windows, and edge devices. |
 
-**[cmd/server/main.go](cmd/server/main.go)** - Minimal HTTP API for executing plugins
-- POST `/run` endpoint
-- Loads plugins from `./plugins/<name>/<name>.wasm`
-- Full lifecycle management per request
-- JSON request/response format
+WasmEdge was chosen for its CNCF sandbox status, AOT compilation support, and mature Go SDK.
 
-## Simple Plugin Example
-
-### Quick Start
-
-**1. Compile the plugin:**
-```bash
-clang++ --target=wasm32-wasi -nostdlib -Wl,--no-entry -Wl,--export=process -O3 -o plugin.wasm plugin.cpp
-```
-
-**2. Test with WasmEdge:**
-```bash
-wasmedge --reactor plugin.wasm process 21
-# Output: 43
-```
-
-**3. Run with Go host:**
-```bash
-go run cmd/simple/main.go
-# Output: Result: 43
-```
-
-## Stable ABI Plugin (Recommended)
-
-The ABI plugin demonstrates production best practices:
-- ✅ Version checking (`get_abi_version`)
-- ✅ Lifecycle management (`init` → `process` → `cleanup`)
-- ✅ Error codes (negative = error, 0 = success, positive = result)
-- ✅ State validation
-- ✅ Diagnostic exports
-
-### Compile ABI Plugin
-
-```bash
-clang++ \
-  --target=wasm32-wasi \
-  -nostdlib \
-  -Wl,--no-entry \
-  -Wl,--export=get_abi_version \
-  -Wl,--export=init \
-  -Wl,--export=process \
-  -Wl,--export=cleanup \
-  -Wl,--export=get_call_count \
-  -Wl,--export=is_initialized \
-  -O3 \
-  -o plugin_abi.wasm \
-  plugin_abi.cpp
-```
-
-### Run ABI Plugin
-
-```bash
-go run cmd/abi/main_abi.go
-```
-
-**Expected output:**
-```
-Plugin ABI version: v1.0.0
-Plugin initialized successfully
-Result: 43
-Total process() calls: 1
-Plugin cleaned up successfully
-```
-
-### Files
-
-**C++ Plugins:**
-- [plugin.cpp](plugin.cpp) - Simple single-function plugin
-- [plugin_abi.cpp](plugin_abi.cpp) - Production ABI plugin with lifecycle and versioning
-- [plugins/hello/hello.cpp](plugins/hello/hello.cpp) - Example plugin for HTTP API
-
-**Go Runtime Package:**
-- [runtime/loader.go](runtime/loader.go) - Plugin loading and VM management
-- [runtime/executor.go](runtime/executor.go) - ABI function execution
-
-**Go Host Examples:**
-- [cmd/server/main.go](cmd/server/main.go) - **HTTP API server** for plugin execution
-- [cmd/example/example.go](cmd/example/example.go) - Uses runtime package (clean API)
-- [cmd/simple/main.go](cmd/simple/main.go) - Direct WasmEdge SDK usage (simple plugin)
-- [cmd/abi/main_abi.go](cmd/abi/main_abi.go) - Direct WasmEdge SDK usage (full ABI)
-
-**Test Suites:**
-- [runtime/loader_test.go](runtime/loader_test.go) - Unit tests for plugin loading
-- [runtime/executor_test.go](runtime/executor_test.go) - Unit tests for execution
-- [runtime/mock_test.go](runtime/mock_test.go) - Mocked tests with gomonkey
-- [cmd/server/handler_test.go](cmd/server/handler_test.go) - HTTP integration tests
-
-**Documentation:**
-- [ABI.md](ABI.md) - **Complete ABI specification, versioning strategy, and common pitfalls**
-- [BUILD.md](BUILD.md) - Compilation guide with flag explanations
-- [go.mod](go.mod) - Go module configuration
-
-### Requirements
-
-- clang++ with WebAssembly support (LLVM 8+)
-- WasmEdge runtime (0.13.0+)
-- Go 1.21+
-- wasmedge-go SDK
-- wasm-objdump (optional, for inspection)
-
-## Key Concepts
-
-### Why extern "C"?
-
-```cpp
-// ❌ Without extern "C" - C++ name mangling
-int process(int x);
-// Symbol: _Z7processi (unpredictable)
-
-// ✅ With extern "C" - stable C linkage
-extern "C" int process(int x);
-// Symbol: process (predictable)
-```
-
-Go cannot call mangled C++ symbols - **all exports must use `extern "C"`**
-
-### ABI Return Convention
-
-| Return Value | Meaning |
-|--------------|---------|
-| `0` | Success (for init/cleanup) |
-| `> 0` | Valid result |
-| `< 0` | Error code |
-
-### Plugin Lifecycle
+## Architecture
 
 ```
-1. get_abi_version() → Check compatibility
-2. init()            → Initialize plugin state
-3. process(x)        → Execute logic (can call multiple times)
-4. cleanup()         → Release resources
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              Go Service                                 │
+│                                                                         │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐   │
+│  │  HTTP API    │───▶│ PluginStore  │───▶│  Plugin Path Resolution  │   │
+│  │  POST /run   │    │  (Interface) │    │  - LocalPluginStore      │   │
+│  └──────────────┘    └──────────────┘    │  - FluidPluginStore      │   │
+│         │                                 └──────────────────────────┘  │
+│         ▼                                              │                │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                     Runtime Package                               │  │
+│  │  ┌────────────┐    ┌────────────┐    ┌────────────────────────┐  │   │
+│  │  │  Loader    │───▶│  Executor  │───▶│  WasmEdge VM Instance  │  │   │
+│  │  │            │    │            │    │  (Isolated Sandbox)    │  │   │
+│  │  └────────────┘    └────────────┘    └────────────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+└────────────────────────────────────│────────────────────────────────────┘
+                                     ▼
+                    ┌─────────────────────────────────┐
+                    │        WASM Plugin (.wasm)      │
+                    │  ┌─────────────────────────────┐│
+                    │  │  init() → process() → cleanup│
+                    │  │  (Stable ABI Contract)       │
+                    │  └─────────────────────────────┘│
+                    └─────────────────────────────────┘
 ```
 
-## Common Pitfalls
+**Data flow:**
+1. HTTP request specifies plugin name and input
+2. PluginStore resolves plugin name to filesystem path
+3. Loader creates isolated WasmEdge VM and loads WASM binary
+4. Executor calls ABI functions in sequence
+5. VM is destroyed after request completes
 
-⚠️ **Name Mangling** - Forgetting `extern "C"` makes exports invisible to Go  
-⚠️ **Struct Passing** - Don't pass structs across WASM boundary (use primitives)  
-⚠️ **Exceptions** - C++ exceptions trap WASM modules (use error codes)  
-⚠️ **Missing Init** - Calling process() before init() returns error  
-⚠️ **No Version Check** - Breaking changes cause runtime failures  
+## Plugin ABI Contract
 
-See [ABI.md](ABI.md) for detailed explanations and solutions.
+Plugins must export exactly three functions:
 
-### Plugin Function
+```c
+// Initialize plugin state. Called once after loading.
+// Returns: 0 on success, negative on error.
+int init();
 
-```cpp
-extern "C" int process(int x);
+// Process input and return result. May be called multiple times.
+// Returns: computed result (positive), or negative error code.
+int process(int input);
+
+// Release resources. Called before unloading.
+// Returns: 0 on success, negative on error.
+int cleanup();
 ```
 
-The current implementation returns `(x * 2) + 1` but can be modified for any deterministic computation.
+**Error codes:**
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `-1` | Not initialized |
+| `-2` | Already initialized |
+| `-3` | Invalid argument |
+| `-4` | Internal error |
 
-## Go Host Programs
+**Constraints:**
+- All functions use C linkage (`extern "C"`)
+- No dynamic memory allocation (no `malloc`, `new`)
+- No standard library dependencies (`-nostdlib`)
+- No floating-point arguments (integer-only ABI)
 
-### Simple Host (cmd/simple/main.go)
+See [ABI.md](ABI.md) for versioning strategy and compatibility guidelines.
 
-Direct WasmEdge SDK usage without abstractions:
+## Plugin Lifecycle
 
-```bash
-go run cmd/simple/main.go
-# Output: Result: 43
+```
+     Load                Init               Execute              Cleanup            Release
+       │                  │                    │                    │                  │
+       ▼                  ▼                    ▼                    ▼                  ▼
+┌─────────────┐    ┌─────────────┐    ┌─────────────────┐    ┌─────────────┐    ┌─────────────┐
+│ LoadPlugin()│───▶│   Init()    │───▶│   Execute(n)    │───▶│  Cleanup()  │───▶│   Close()   │
+│ Create VM   │    │ Call init() │    │ Call process(n) │    │Call cleanup │    │ Destroy VM  │
+│ Load WASM   │    │ Set state   │    │ Return result   │    │ Reset state │    │ Free memory │
+└─────────────┘    └─────────────┘    └─────────────────┘    └─────────────┘    └─────────────┘
 ```
 
-### ABI Host (cmd/abi/main_abi.go)
+Each HTTP request creates a fresh VM instance. No state persists between requests.
 
-Full ABI implementation with version checking and lifecycle:
+## Fluid Integration
 
-```bash
-go run cmd/abi/main_abi.go
-# Output:
-# Plugin ABI version: v1.0.0
-# Plugin initialized successfully
-# Result: 43
-# Total process() calls: 1
-# Plugin cleaned up successfully
-```
+In production, plugins may be stored in distributed storage (S3, HDFS, etc.) and cached locally using [Fluid](https://github.com/fluid-cloudnative/fluid).
 
-### Runtime Package Example (example.go)
+**How it works:**
+1. Fluid Dataset CRD defines remote storage location
+2. AlluxioRuntime or JuiceFSRuntime handles caching
+3. Dataset is mounted as a POSIX filesystem path (e.g., `/mnt/fluid/plugins`)
+4. This system treats the mount as a regular directory
 
-**Recommended approach** - Uses the clean `runtime` package:
+**No Kubernetes client required.** The `FluidPluginStore` implementation simply reads from the mounted path. Caching, replication, and data locality are handled transparently by Fluid.
 
-```bash
-go run cmd/example/example.go
-# Output:
-# Loaded plugin: plugin_abi.wasm
-# Plugin initialized successfully
-# Result: process(21) = 43
-# Result: process(50) = 101
-# Plugin cleaned up successfully
-```
-
-**Usage:**
 ```go
-import "github.com/mrhapile/wasm-plugin-system/runtime"
+// Development: local filesystem
+store := fluid.NewLocalPluginStore("./plugins")
 
-// Load plugin (validates and instantiates)
-plugin, err := runtime.LoadPlugin("plugin_abi.wasm")
-defer plugin.Close()
-
-// Initialize
-plugin.Init()
-defer plugin.Cleanup()
-
-// Execute
-result, err := plugin.Execute(21)
+// Production: Fluid dataset mount
+store := fluid.NewFluidPluginStore("/mnt/fluid/plugins")
 ```
 
-**Benefits:**
-- Clean API - no WasmEdge details exposed
-- Automatic resource cleanup
-- Proper error wrapping with context
-- Testable - no global state
-- Idiomatic Go code
-
-## HTTP API Server
-
-The HTTP server provides a REST API for executing WASM plugins.
-
-### Start the Server
-
+Environment-based selection:
 ```bash
-go run cmd/server/main.go
-# Starting WASM plugin server on :8080
+# Development (default)
+go run ./cmd/server
+
+# Production with Fluid
+PLUGIN_STORE=fluid FLUID_MOUNT_PATH=/mnt/fluid/plugins go run ./cmd/server
 ```
 
-### Execute a Plugin
+## HTTP API
+
+### POST /run
+
+Execute a plugin with the given input.
 
 **Request:**
+```json
+{
+  "plugin": "hello",
+  "input": 21
+}
+```
+
+**Response:**
+```json
+{
+  "output": 43
+}
+```
+
+**Example:**
 ```bash
 curl -X POST http://localhost:8080/run \
   -H "Content-Type: application/json" \
   -d '{"plugin": "hello", "input": 21}'
 ```
 
-**Response:**
-```json
-{"output": 43}
-```
+**Error responses:**
+| Status | Condition |
+|--------|-----------|
+| 400 | Invalid JSON, missing plugin name, or invalid characters |
+| 404 | Plugin not found |
+| 405 | Method not POST |
+| 500 | Plugin execution failed |
 
-### Plugin Directory Structure
+## Testing Strategy
 
-Plugins are loaded from `./plugins/<name>/<name>.wasm`:
+Tests are written using Ginkgo v2 with Gomega matchers. Testify is used for specific assertions. Gomonkey enables mocking of filesystem operations.
 
-```
-plugins/
-└── hello/
-    ├── hello.cpp   # Source code
-    └── hello.wasm  # Compiled WASM module
-```
+### Unit Tests
 
-### Build the Example Plugin
+Located alongside source files (`*_test.go`):
 
-```bash
-cd plugins/hello
-clang++ --target=wasm32-wasi -nostdlib -Wl,--no-entry \
-  -Wl,--export=init -Wl,--export=process -Wl,--export=cleanup \
-  -O3 -o hello.wasm hello.cpp
-```
+| Package | Coverage |
+|---------|----------|
+| `runtime` | Loader initialization, error paths, resource cleanup |
+| `runtime` | Executor lifecycle, ABI error code handling |
+| `fluid` | Path resolution, missing plugin handling |
 
-### Error Handling
+### Integration Tests
 
-The server returns appropriate HTTP status codes:
+| Package | Coverage |
+|---------|----------|
+| `cmd/server` | HTTP status codes, JSON parsing, path traversal prevention |
 
-| Status | Description |
-|--------|-------------|
-| 200 | Success - plugin executed |
-| 400 | Bad request - invalid JSON or plugin name |
-| 405 | Method not allowed - use POST |
-| 500 | Internal error - plugin load/execution failed |
-
-**Error response format:**
-```json
-{"error": "failed to load plugin: plugin file not found"}
-```
-
-## Installation
-
-**1. Install WasmEdge:**
-```bash
-curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash
-```
-
-**2. Install Go dependencies:**
-```bash
-go mod download
-```
-
-## Testing
-
-The project includes comprehensive unit and integration tests using Ginkgo v2, Gomega, testify, and gomonkey.
-
-### Run All Tests
+### Running Tests
 
 ```bash
-# Run all tests with verbose output
+# All tests
 go test -v ./...
 
-# Run with Ginkgo CLI (recommended)
-ginkgo -v ./...
+# With race detection
+go test -race ./...
+
+# With coverage
+go test -cover -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
 ```
 
-### Run Specific Test Suites
+### Failure Cases Tested
 
-```bash
-# Runtime package unit tests
-go test -v ./runtime/...
+- Missing plugin file
+- Invalid WASM binary
+- Plugin not initialized before `process()`
+- Double initialization
+- Missing ABI exports
+- Path traversal attempts (`../`)
+- Malformed JSON input
 
-# HTTP server integration tests
-go test -v ./cmd/server/...
+## CI Pipeline
+
+GitHub Actions workflow (`.github/workflows/ci.yml`):
+
+| Step | Description |
+|------|-------------|
+| Checkout | Clone repository |
+| Setup Go | Install Go 1.24 with module caching |
+| Install clang | C++ to WASM compilation |
+| Install WasmEdge | Runtime for tests |
+| Build WASM | Compile `plugins/hello/hello.wasm` |
+| Build Go | Verify compilation |
+| Vet | Static analysis |
+| Test | Unit and integration tests with race detection |
+| Coverage | Print summary, upload artifact |
+| Artifacts | Upload WASM binaries |
+
+Triggers: push to `main`, pull requests to `main`.
+
+## Project Structure
+
+```
+.
+├── .github/workflows/     # CI pipeline
+│   └── ci.yml
+├── cmd/                   # Executable entry points
+│   ├── server/            # HTTP API server
+│   ├── abi/               # ABI plugin demo
+│   ├── simple/            # Simple plugin demo
+│   └── example/           # Additional examples
+├── runtime/               # Core Go package
+│   ├── loader.go          # Plugin loading, VM management
+│   ├── executor.go        # ABI function execution
+│   └── *_test.go          # Unit tests
+├── fluid/                 # Storage abstraction
+│   ├── plugin_store.go    # PluginStore interface + implementations
+│   └── *_test.go          # Unit tests
+├── plugins/               # Plugin source and binaries
+│   └── hello/
+│       ├── hello.cpp      # Example plugin source
+│       └── hello.wasm     # Compiled binary (git-ignored)
+├── plugin.cpp             # Simple plugin example
+├── plugin_abi.cpp         # Full ABI plugin example
+├── ABI.md                 # ABI design document
+├── BUILD.md               # Compilation instructions
+├── go.mod
+└── go.sum
 ```
 
-### Test Coverage
+## Limitations
 
-| Package | Tests |
-|---------|-------|
-| `runtime` | LoadPlugin, Init, Execute, Cleanup, Close, resource management |
-| `cmd/server` | POST /run, JSON validation, error handling, HTTP status codes |
+- **Integer-only ABI**: No floating-point, string, or complex type passing. Requires serialization for structured data.
+- **No WASI filesystem**: Plugins cannot read files. All data must be passed through function arguments.
+- **Single-threaded execution**: Each VM instance is single-threaded. Parallelism requires multiple VM instances.
+- **No plugin-to-plugin communication**: Plugins are isolated. The host must mediate all data exchange.
+- **WasmEdge dependency**: Requires WasmEdge runtime and development libraries installed on the host.
 
-### Testing Stack
+## Future Work
 
-- **Ginkgo v2** - BDD-style test framework
-- **Gomega** - Expressive matchers
-- **testify** - Additional assertions
-- **gomonkey** - Function mocking for error path testing
+- **Streaming API**: Support for processing large datasets without loading into memory.
+- **Plugin registry**: Versioned plugin discovery with semver constraints.
+- **Metrics export**: Prometheus metrics for plugin execution latency and error rates.
+- **String passing**: Memory-based ABI for passing byte arrays between host and plugin.
+- **Multi-function plugins**: Support for plugins exporting multiple processing functions.
+- **Wasm Component Model**: Migration to the emerging component model standard.
 
-## Learn More
+## Ecosystem Alignment
 
-- [ABI.md](ABI.md) - Complete ABI design guide with:
-  - Why `extern "C"` is required
-  - How Go discovers and calls exports
-  - Versioning strategy and forward compatibility
-  - 8 common pitfalls with solutions
-  - Best practices for production plugins
+This project integrates with CNCF ecosystem components:
 
-- [BUILD.md](BUILD.md) - Detailed compilation guide with explanations for every compiler flag
+| Project | Integration |
+|---------|-------------|
+| [WasmEdge](https://wasmedge.org/) | CNCF Sandbox runtime. Provides the execution environment for WASM plugins. |
+| [Fluid](https://github.com/fluid-cloudnative/fluid) | CNCF Sandbox data orchestration. Enables distributed plugin storage with local caching. |
+| [Kubernetes](https://kubernetes.io/) | Deployment target. Fluid integration assumes K8s-managed storage mounts. |
+
+**Design principles aligned with cloud-native:**
+- Stateless request handling
+- Horizontal scalability (each request is independent)
+- Observable (structured error codes, testable interfaces)
+- Declarative configuration (environment variables for store selection)
+
+## License
+
+[Specify your license here]
+
+## References
+
+- [WasmEdge Documentation](https://wasmedge.org/docs/)
+- [WasmEdge Go SDK](https://github.com/second-state/WasmEdge-go)
+- [Fluid GitHub](https://github.com/fluid-cloudnative/fluid)
+- [WebAssembly Specification](https://webassembly.github.io/spec/)
+- [WASI Specification](https://wasi.dev/)
 
 
